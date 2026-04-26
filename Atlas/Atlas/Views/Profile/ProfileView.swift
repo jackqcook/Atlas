@@ -6,26 +6,21 @@ private let atlasPersonalCrimson = Color(red: 0.74, green: 0.05, blue: 0.16)
 struct PersonalView: View {
     @Environment(AuthViewModel.self) private var authVM
     @State private var profile: UserProfileRecord?
-    @State private var selectedPhoto: PhotosPickerItem?
     @State private var showEditProfile = false
     @State private var editingNote: ProfileNoteCard?
     @State private var showNewNote = false
     @State private var showGrowthMap = false
-    @State private var showNameEditor = false
-    @State private var showSignOutAlert = false
-    @State private var draftDisplayName = ""
     @State private var searchText = ""
     @State private var selectedCategory: PersonalNoteCategory?
 
     var body: some View {
         NavigationStack {
             ScrollView {
-                if let user = authVM.currentUser, let profile {
+                if let profile {
                     VStack(alignment: .leading, spacing: 24) {
-                        topShelf(user: user, profile: profile)
-                        collectionsSection(profile: profile)
+                        growthMapRow
                         recentsSection(profile: profile)
-                        workspaceSection(profile: profile)
+                        collectionsSection(profile: profile)
                     }
                     .padding(.horizontal, 20)
                     .padding(.top, 18)
@@ -47,7 +42,9 @@ struct PersonalView: View {
                                 .foregroundStyle(atlasPersonalCrimson)
                         }
 
-                        PhotosPicker(selection: $selectedPhoto, matching: .images) {
+                        Button {
+                            showEditProfile = true
+                        } label: {
                             if let user = authVM.currentUser, let profile {
                                 avatarView(user: user, profile: profile, size: 34)
                             }
@@ -59,18 +56,13 @@ struct PersonalView: View {
             .task {
                 await loadProfile()
             }
-            .onChange(of: selectedPhoto) { _, newValue in
-                guard let newValue else { return }
-                Task {
-                    await persistPhoto(from: newValue)
-                }
-            }
             .sheet(isPresented: $showEditProfile) {
-                if let profile {
-                    EditPersonalProfileSheet(profile: profile) { updated in
-                        Task {
-                            await saveProfile(updated)
-                        }
+                if let user = authVM.currentUser, let profile {
+                    EditPersonalProfileSheet(
+                        profile: profile,
+                        initialDisplayName: user.displayName
+                    ) { updated in
+                        Task { await saveProfile(updated) }
                     }
                 }
             }
@@ -80,9 +72,7 @@ struct PersonalView: View {
                         note: note,
                         allNotes: profile.notes
                     ) { updated in
-                        Task {
-                            await saveNote(updated)
-                        }
+                        Task { await saveNote(updated) }
                     }
                 }
             }
@@ -100,9 +90,7 @@ struct PersonalView: View {
                         allNotes: profile.notes,
                         isNew: true
                     ) { created in
-                        Task {
-                            await addNote(created)
-                        }
+                        Task { await addNote(created) }
                     }
                 }
             }
@@ -111,90 +99,82 @@ struct PersonalView: View {
                     PersonalGraphView(profile: profile)
                 }
             }
-            .alert("Edit Name", isPresented: $showNameEditor) {
-                TextField("Display Name", text: $draftDisplayName)
-                Button("Save") {
-                    Task {
-                        await authVM.updateDisplayName(draftDisplayName)
-                    }
-                }
-                Button("Cancel", role: .cancel) {}
-            }
-            .alert("Sign Out", isPresented: $showSignOutAlert) {
-                Button("Sign Out", role: .destructive) {
-                    Task { await authVM.signOut() }
-                }
-                Button("Cancel", role: .cancel) {}
-            } message: {
-                Text("You'll need your phone number to sign back in outside demo mode.")
-            }
         }
     }
 
-    private func topShelf(user: User, profile: UserProfileRecord) -> some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text(user.displayName)
-                        .font(.system(size: 32, weight: .bold, design: .rounded))
-                        .foregroundStyle(.black)
-                    Text("A private workspace for notes, patterns, and progress over time.")
-                        .font(.system(size: 16, weight: .medium))
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
+    private var growthMapRow: some View {
+        Button {
+            showGrowthMap = true
+        } label: {
+            HStack(spacing: 14) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(Color(red: 0.13, green: 0.13, blue: 0.14))
+                        .frame(width: 44, height: 44)
+                    Image(systemName: "point.3.connected.trianglepath.dotted")
+                        .font(.system(size: 20, weight: .semibold))
+                        .foregroundStyle(.white)
                 }
 
-                Spacer(minLength: 16)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Growth Map")
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundStyle(.black)
+                    Text("See how ideas, goals, and people connect")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(atlasPersonalCrimson)
+                }
 
+                Spacer()
+
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(14)
+            .background(Color(red: 0.985, green: 0.985, blue: 0.99))
+            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func recentsSection(profile: UserProfileRecord) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            sectionTitle(selectedCategory == nil ? "Recents" : "\(selectedCategory?.displayName ?? "") Notes")
+
+            ForEach(Array(filteredNotes.prefix(8).enumerated()), id: \.element.id) { index, note in
                 Button {
-                    showEditProfile = true
+                    editingNote = note
                 } label: {
-                    HStack(spacing: 8) {
-                        avatarView(user: user, profile: profile, size: 42)
-                        Image(systemName: "slider.horizontal.3")
-                            .font(.system(size: 14, weight: .bold))
-                            .foregroundStyle(.black.opacity(0.72))
+                    HStack {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(note.title)
+                                .font(.system(size: 19, weight: .semibold))
+                                .foregroundStyle(.black)
+                            HStack(spacing: 8) {
+                                Text(note.category.displayName)
+                                    .font(.system(size: 12, weight: .bold))
+                                    .foregroundStyle(atlasPersonalCrimson)
+                                if let firstTag = note.tags.first {
+                                    Text("#\(firstTag)")
+                                        .font(.system(size: 12, weight: .bold))
+                                        .foregroundStyle(.secondary)
+                                }
+                                Text(note.updatedAt.formatted(date: .abbreviated, time: .omitted))
+                                    .font(.system(size: 12, weight: .medium))
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+
+                        Spacer()
                     }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 8)
-                    .background(Color.white)
-                    .overlay(
-                        Capsule()
-                            .stroke(Color.black.opacity(0.07), lineWidth: 1)
-                    )
-                    .shadow(color: .black.opacity(0.05), radius: 16, y: 8)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 14)
+                    .background(index == 0 ? Color(red: 0.95, green: 0.95, blue: 0.96) : Color.clear)
+                    .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
                 }
                 .buttonStyle(.plain)
             }
-
-            Button {
-                showGrowthMap = true
-            } label: {
-                VStack(alignment: .leading, spacing: 14) {
-                    HStack {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("Growth Map")
-                                .font(.system(size: 20, weight: .bold, design: .rounded))
-                                .foregroundStyle(.white)
-                            Text("Peek into the shape of your notes, goals, and connections.")
-                                .font(.system(size: 14, weight: .medium))
-                                .foregroundStyle(.white.opacity(0.72))
-                        }
-                        Spacer()
-                        Image(systemName: "arrow.up.forward")
-                            .font(.system(size: 16, weight: .bold))
-                            .foregroundStyle(.white)
-                    }
-
-                    PersonalGraphPreview(notes: filteredNotes.isEmpty ? profile.notes : filteredNotes)
-                        .frame(height: 170)
-                        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-                }
-                .padding(18)
-                .background(Color(red: 0.12, green: 0.12, blue: 0.13))
-                .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
-            }
-            .buttonStyle(.plain)
         }
     }
 
@@ -240,103 +220,6 @@ struct PersonalView: View {
                 .buttonStyle(.plain)
             }
         }
-    }
-
-    private func recentsSection(profile: UserProfileRecord) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
-            sectionTitle(selectedCategory == nil ? "Recents" : "\(selectedCategory?.displayName ?? "") Notes")
-
-            ForEach(Array(filteredNotes.prefix(8).enumerated()), id: \.element.id) { index, note in
-                Button {
-                    editingNote = note
-                } label: {
-                    HStack {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text(note.title)
-                                .font(.system(size: 19, weight: .semibold))
-                                .foregroundStyle(.black)
-                            HStack(spacing: 8) {
-                                Text(note.category.displayName)
-                                    .font(.system(size: 12, weight: .bold))
-                                    .foregroundStyle(atlasPersonalCrimson)
-                                Text(note.updatedAt.formatted(date: .abbreviated, time: .omitted))
-                                    .font(.system(size: 12, weight: .medium))
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-
-                        Spacer()
-                    }
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 14)
-                    .background(index == 0 ? Color(red: 0.95, green: 0.95, blue: 0.96) : Color.clear)
-                    .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-                }
-                .buttonStyle(.plain)
-            }
-        }
-    }
-
-    private func workspaceSection(profile: UserProfileRecord) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
-            sectionTitle("Profile & Settings")
-
-            Button {
-                showEditProfile = true
-            } label: {
-                workspaceRow(
-                    title: "Edit Profile",
-                    subtitle: "Photo, headline, goals, about, and website",
-                    systemImage: "person.crop.circle"
-                )
-            }
-            .buttonStyle(.plain)
-
-            Button {
-                draftDisplayName = authVM.currentUser?.displayName ?? ""
-                showNameEditor = true
-            } label: {
-                workspaceRow(
-                    title: "Edit Display Name",
-                    subtitle: authVM.currentUser?.displayName ?? "Member",
-                    systemImage: "pencil.line"
-                )
-            }
-            .buttonStyle(.plain)
-
-            Button {
-                showSignOutAlert = true
-            } label: {
-                workspaceRow(
-                    title: "Sign Out",
-                    subtitle: "Leave Atlas on this device",
-                    systemImage: "rectangle.portrait.and.arrow.right",
-                    destructive: true
-                )
-            }
-            .buttonStyle(.plain)
-        }
-    }
-
-    private func workspaceRow(title: String, subtitle: String, systemImage: String, destructive: Bool = false) -> some View {
-        HStack(spacing: 14) {
-            Image(systemName: systemImage)
-                .font(.system(size: 18, weight: .semibold))
-                .foregroundStyle(destructive ? atlasPersonalCrimson : .black)
-                .frame(width: 26)
-
-            VStack(alignment: .leading, spacing: 3) {
-                Text(title)
-                    .font(.system(size: 17, weight: .semibold))
-                    .foregroundStyle(destructive ? atlasPersonalCrimson : .black)
-                Text(subtitle)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(destructive ? atlasPersonalCrimson.opacity(0.8) : .secondary)
-            }
-
-            Spacer()
-        }
-        .padding(.vertical, 4)
     }
 
     private func sectionTitle(_ title: String) -> some View {
@@ -418,32 +301,46 @@ struct PersonalView: View {
         if let index = profile.notes.firstIndex(where: { $0.id == note.id }) {
             profile.notes[index] = note
         }
+        normalizeTags(&profile)
         await saveProfile(profile)
     }
 
     private func addNote(_ note: ProfileNoteCard) async {
         guard var profile else { return }
         profile.notes.insert(note, at: 0)
+        normalizeTags(&profile)
         await saveProfile(profile)
     }
 
-    private func persistPhoto(from item: PhotosPickerItem) async {
-        guard var profile,
-              let data = try? await item.loadTransferable(type: Data.self) else { return }
-        profile.avatarImageData = data
-        await saveProfile(profile)
+    private func normalizeTags(_ profile: inout UserProfileRecord) {
+        profile.notes = profile.notes.map { note in
+            var updated = note
+            let categoryTag = note.category.displayName.lowercased()
+            var tags = updated.tags.map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+                .filter { !$0.isEmpty }
+            if !tags.contains(categoryTag) {
+                tags.insert(categoryTag, at: 0)
+            }
+            updated.tags = Array(NSOrderedSet(array: tags)) as? [String] ?? tags
+            return updated
+        }
     }
 }
 
 private struct EditPersonalProfileSheet: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(AuthViewModel.self) private var authVM
     @State private var draft: UserProfileRecord
     @State private var goalsText: String
+    @State private var displayName: String
+    @State private var selectedPhoto: PhotosPickerItem?
+    @State private var showSignOutAlert = false
     let onSave: (UserProfileRecord) -> Void
 
-    init(profile: UserProfileRecord, onSave: @escaping (UserProfileRecord) -> Void) {
+    init(profile: UserProfileRecord, initialDisplayName: String, onSave: @escaping (UserProfileRecord) -> Void) {
         _draft = State(initialValue: profile)
         _goalsText = State(initialValue: profile.goals.joined(separator: ", "))
+        _displayName = State(initialValue: initialDisplayName)
         self.onSave = onSave
     }
 
@@ -451,6 +348,11 @@ private struct EditPersonalProfileSheet: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
+                    avatarPicker
+                        .frame(maxWidth: .infinity, alignment: .center)
+                        .padding(.bottom, 8)
+
+                    editField("Display Name", text: $displayName, prompt: "Your name")
                     editField("Headline", text: $draft.headline, prompt: "Engineer, founder, operator")
                     editField("Academic Focus", text: $draft.academicFocus, prompt: "Applied Math, Product, AI")
                     editField("Class / Cohort", text: $draft.classYear, prompt: "Class of 2026")
@@ -485,12 +387,41 @@ private struct EditPersonalProfileSheet: View {
                             )
                             .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
                     }
+
+                    Button {
+                        showSignOutAlert = true
+                    } label: {
+                        Text("Sign Out")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundStyle(atlasPersonalCrimson)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 14)
+                            .background(atlasPersonalCrimson.opacity(0.08))
+                            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                    }
+                    .padding(.top, 8)
                 }
                 .padding(20)
             }
             .background(Color(red: 0.98, green: 0.98, blue: 0.985).ignoresSafeArea())
             .navigationTitle("Edit Profile")
             .navigationBarTitleDisplayMode(.inline)
+            .onChange(of: selectedPhoto) { _, newValue in
+                guard let newValue else { return }
+                Task {
+                    if let data = try? await newValue.loadTransferable(type: Data.self) {
+                        draft.avatarImageData = data
+                    }
+                }
+            }
+            .alert("Sign Out", isPresented: $showSignOutAlert) {
+                Button("Sign Out", role: .destructive) {
+                    Task { await authVM.signOut() }
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("You'll need your phone number to sign back in outside demo mode.")
+            }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
@@ -503,12 +434,50 @@ private struct EditPersonalProfileSheet: View {
                             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
                             .filter { !$0.isEmpty }
                         onSave(draft)
+                        let trimmed = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+                        if !trimmed.isEmpty, trimmed != authVM.currentUser?.displayName {
+                            Task { await authVM.updateDisplayName(trimmed) }
+                        }
                         dismiss()
                     }
                     .foregroundStyle(atlasPersonalCrimson)
                 }
             }
         }
+    }
+
+    private var avatarPicker: some View {
+        PhotosPicker(selection: $selectedPhoto, matching: .images) {
+            ZStack(alignment: .bottomTrailing) {
+                if let data = draft.avatarImageData, let uiImage = UIImage(data: data) {
+                    Image(uiImage: uiImage)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: 88, height: 88)
+                        .clipShape(Circle())
+                } else {
+                    Circle()
+                        .fill(atlasPersonalCrimson.opacity(0.12))
+                        .frame(width: 88, height: 88)
+                        .overlay {
+                            Text(String(displayName.prefix(1)).uppercased())
+                                .font(.system(size: 32, weight: .bold, design: .rounded))
+                                .foregroundStyle(atlasPersonalCrimson)
+                        }
+                }
+
+                Circle()
+                    .fill(atlasPersonalCrimson)
+                    .frame(width: 28, height: 28)
+                    .overlay {
+                        Image(systemName: "camera.fill")
+                            .font(.system(size: 12, weight: .bold))
+                            .foregroundStyle(.white)
+                    }
+                    .offset(x: 2, y: 2)
+            }
+        }
+        .buttonStyle(.plain)
     }
 
     private func editField(_ title: String, text: Binding<String>, prompt: String) -> some View {
@@ -531,6 +500,7 @@ private struct EditPersonalProfileSheet: View {
 private struct PersonalNoteEditor: View {
     @Environment(\.dismiss) private var dismiss
     @State private var draft: ProfileNoteCard
+    @State private var tagsText: String
     let allNotes: [ProfileNoteCard]
     let isNew: Bool
     let onSave: (ProfileNoteCard) -> Void
@@ -542,6 +512,7 @@ private struct PersonalNoteEditor: View {
         onSave: @escaping (ProfileNoteCard) -> Void
     ) {
         _draft = State(initialValue: note)
+        _tagsText = State(initialValue: note.tags.filter { $0 != note.category.displayName.lowercased() }.joined(separator: ", "))
         self.allNotes = allNotes
         self.isNew = isNew
         self.onSave = onSave
@@ -549,117 +520,169 @@ private struct PersonalNoteEditor: View {
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Title")
-                            .font(.system(size: 14, weight: .bold))
-                            .foregroundStyle(atlasPersonalCrimson)
-                        TextField("Untitled note", text: $draft.title)
-                            .padding(14)
-                            .background(Color.white)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                                    .stroke(Color.black.opacity(0.08), lineWidth: 1)
-                            )
-                            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-                    }
+            VStack(spacing: 0) {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 18) {
+                        Text(draft.updatedAt.formatted(date: .long, time: .shortened))
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .center)
+                            .padding(.top, 6)
 
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Category")
-                            .font(.system(size: 14, weight: .bold))
-                            .foregroundStyle(atlasPersonalCrimson)
-                        Picker("Category", selection: $draft.category) {
-                            ForEach(PersonalNoteCategory.allCases, id: \.self) { category in
-                                Text(category.displayName).tag(category)
-                            }
-                        }
-                        .pickerStyle(.segmented)
-                    }
+                        TextField("Title", text: $draft.title)
+                            .font(.system(size: 38, weight: .bold, design: .rounded))
+                            .foregroundStyle(.black)
 
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Prompt")
-                            .font(.system(size: 14, weight: .bold))
-                            .foregroundStyle(atlasPersonalCrimson)
-                        TextField("Small framing question", text: $draft.prompt)
-                            .padding(14)
-                            .background(Color.white)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                                    .stroke(Color.black.opacity(0.08), lineWidth: 1)
-                            )
-                            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-                    }
+                        TextField("Optional note prompt", text: $draft.prompt)
+                            .font(.system(size: 16, weight: .medium))
+                            .foregroundStyle(.secondary)
 
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Body")
-                            .font(.system(size: 14, weight: .bold))
-                            .foregroundStyle(atlasPersonalCrimson)
                         TextEditor(text: $draft.body)
-                            .frame(minHeight: 220)
-                            .padding(12)
-                            .background(Color.white)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 20, style: .continuous)
-                                    .stroke(Color.black.opacity(0.08), lineWidth: 1)
-                            )
-                            .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-                    }
+                            .font(.system(size: 22, weight: .regular, design: .rounded))
+                            .scrollContentBackground(.hidden)
+                            .frame(minHeight: 340)
 
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text("Linked Notes")
-                            .font(.system(size: 14, weight: .bold))
-                            .foregroundStyle(atlasPersonalCrimson)
-
-                        ForEach(allNotes.filter { $0.id != draft.id }) { note in
-                            Button {
-                                toggleLink(note.id)
-                            } label: {
-                                HStack {
-                                    VStack(alignment: .leading, spacing: 3) {
-                                        Text(note.title)
-                                            .font(.system(size: 16, weight: .semibold))
-                                            .foregroundStyle(.black)
-                                        Text(note.category.displayName)
-                                            .font(.system(size: 12, weight: .bold))
-                                            .foregroundStyle(atlasPersonalCrimson)
-                                    }
-
-                                    Spacer()
-
-                                    Image(systemName: draft.linkedNoteIDs.contains(note.id) ? "checkmark.circle.fill" : "circle")
-                                        .font(.system(size: 20, weight: .semibold))
-                                        .foregroundStyle(draft.linkedNoteIDs.contains(note.id) ? atlasPersonalCrimson : .secondary)
+                        VStack(alignment: .leading, spacing: 12) {
+                            Picker("Category", selection: $draft.category) {
+                                ForEach(PersonalNoteCategory.allCases, id: \.self) { category in
+                                    Text(category.displayName).tag(category)
                                 }
-                                .padding(.vertical, 6)
                             }
-                            .buttonStyle(.plain)
+                            .pickerStyle(.segmented)
+
+                            TextField("Extra tags, comma separated", text: $tagsText)
+                                .font(.system(size: 15, weight: .medium))
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 12)
+                                .background(Color(red: 0.985, green: 0.985, blue: 0.99))
+                                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                        }
+                        .padding(.top, 10)
+
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("Linked Notes")
+                                .font(.system(size: 15, weight: .bold))
+                                .foregroundStyle(atlasPersonalCrimson)
+
+                            ForEach(allNotes.filter { $0.id != draft.id }) { note in
+                                Button {
+                                    toggleLink(note.id)
+                                } label: {
+                                    HStack {
+                                        VStack(alignment: .leading, spacing: 3) {
+                                            Text(note.title)
+                                                .font(.system(size: 16, weight: .semibold))
+                                                .foregroundStyle(.black)
+                                            Text(note.category.displayName)
+                                                .font(.system(size: 12, weight: .bold))
+                                                .foregroundStyle(atlasPersonalCrimson)
+                                        }
+
+                                        Spacer()
+
+                                        Image(systemName: draft.linkedNoteIDs.contains(note.id) ? "checkmark.circle.fill" : "circle")
+                                            .font(.system(size: 20, weight: .semibold))
+                                            .foregroundStyle(draft.linkedNoteIDs.contains(note.id) ? atlasPersonalCrimson : .secondary)
+                                    }
+                                    .padding(.vertical, 6)
+                                }
+                                .buttonStyle(.plain)
+                            }
                         }
                     }
+                    .padding(.horizontal, 20)
+                    .padding(.bottom, 120)
                 }
-                .padding(20)
+                bottomAccessoryBar
             }
-            .background(Color(red: 0.98, green: 0.98, blue: 0.985).ignoresSafeArea())
+            .background(Color(red: 1.0, green: 0.998, blue: 0.992).ignoresSafeArea())
             .navigationTitle(isNew ? "New Note" : (draft.title.isEmpty ? "Note" : draft.title))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Close") { dismiss() }
-                        .foregroundStyle(atlasPersonalCrimson)
+                    Button {
+                        dismiss()
+                    } label: {
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: 18, weight: .bold))
+                            .foregroundStyle(.black)
+                    }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    HStack(spacing: 18) {
+                        Image(systemName: "square.and.arrow.up")
+                            .font(.system(size: 20, weight: .medium))
+                            .foregroundStyle(.black)
+                        Image(systemName: "ellipsis")
+                            .font(.system(size: 20, weight: .bold))
+                            .foregroundStyle(.black)
+                    }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") {
-                        draft.updatedAt = Date()
-                        if draft.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                            draft.title = "Untitled Note"
-                        }
-                        onSave(draft)
-                        dismiss()
+                    Button("Done") {
+                        saveAndDismiss()
                     }
                     .foregroundStyle(atlasPersonalCrimson)
                 }
             }
         }
+    }
+
+    private var bottomAccessoryBar: some View {
+        HStack {
+            HStack(spacing: 28) {
+                Image(systemName: "checklist")
+                Image(systemName: "paperclip")
+                Image(systemName: "pencil.tip.crop.circle")
+            }
+            .font(.system(size: 22, weight: .medium))
+            .foregroundStyle(.black)
+            .padding(.horizontal, 24)
+            .padding(.vertical, 18)
+            .background(Color.white)
+            .overlay(
+                Capsule()
+                    .stroke(Color.black.opacity(0.06), lineWidth: 1)
+            )
+            .shadow(color: .black.opacity(0.05), radius: 16, y: 10)
+
+            Spacer()
+
+            Button {
+                saveAndDismiss()
+            } label: {
+                Image(systemName: "square.and.pencil")
+                    .font(.system(size: 24, weight: .medium))
+                    .foregroundStyle(.black)
+                    .frame(width: 68, height: 68)
+                    .background(Color.white)
+                    .overlay(
+                        Circle()
+                            .stroke(Color.black.opacity(0.06), lineWidth: 1)
+                    )
+                    .shadow(color: .black.opacity(0.05), radius: 16, y: 10)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 20)
+        .padding(.bottom, 22)
+        .padding(.top, 12)
+        .background(Color.clear)
+    }
+
+    private func saveAndDismiss() {
+        draft.updatedAt = Date()
+        if draft.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            draft.title = "Untitled Note"
+        }
+        let extraTags = tagsText
+            .split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+            .filter { !$0.isEmpty }
+        draft.tags = [draft.category.displayName.lowercased()] + extraTags
+        draft.tags = Array(NSOrderedSet(array: draft.tags)) as? [String] ?? draft.tags
+        onSave(draft)
+        dismiss()
     }
 
     private func toggleLink(_ id: UUID) {
@@ -728,14 +751,6 @@ private struct PersonalGraphView: View {
 
     private var selectedNote: ProfileNoteCard? {
         profile.notes.first(where: { $0.id == selectedNoteID }) ?? profile.notes.first
-    }
-}
-
-private struct PersonalGraphPreview: View {
-    let notes: [ProfileNoteCard]
-
-    var body: some View {
-        PersonalGraphDrawing(notes: notes, selectedNoteID: .constant(nil), allowsTap: false)
     }
 }
 
