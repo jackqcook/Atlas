@@ -15,43 +15,39 @@ struct PersonalView: View {
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                if let profile {
-                    VStack(alignment: .leading, spacing: 24) {
-                        growthMapRow
-                            .padding(.horizontal, 20)
-                        recentsSection(profile: profile)
-                        collectionsSection(profile: profile)
-                            .padding(.horizontal, 20)
+            ZStack(alignment: .bottomTrailing) {
+                ScrollView {
+                    if let profile {
+                        VStack(alignment: .leading, spacing: 24) {
+                            growthMapRow
+                                .padding(.horizontal, 20)
+                            recentsSection(profile: profile)
+                            collectionsSection(profile: profile)
+                                .padding(.horizontal, 20)
+                        }
+                        .padding(.top, 18)
+                        .padding(.bottom, 110)
                     }
-                    .padding(.top, 18)
-                    .padding(.bottom, 42)
                 }
+                .background(Color.white.ignoresSafeArea())
+
+                composeButton
+                    .padding(.trailing, 20)
+                    .padding(.bottom, 24)
             }
-            .background(Color.white.ignoresSafeArea())
             .navigationTitle("Personal")
             .navigationBarTitleDisplayMode(.large)
             .searchable(text: $searchText, prompt: "Search notes")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    HStack(spacing: 12) {
-                        Button {
-                            showNewNote = true
-                        } label: {
-                            Image(systemName: "plus")
-                                .font(.system(size: 17, weight: .semibold))
-                                .foregroundStyle(atlasPersonalCrimson)
+                    Button {
+                        showEditProfile = true
+                    } label: {
+                        if let user = authVM.currentUser, let profile {
+                            avatarView(user: user, profile: profile, size: 34)
                         }
-
-                        Button {
-                            showEditProfile = true
-                        } label: {
-                            if let user = authVM.currentUser, let profile {
-                                avatarView(user: user, profile: profile, size: 34)
-                            }
-                        }
-                        .buttonStyle(.plain)
                     }
+                    .buttonStyle(.plain)
                 }
             }
             .task {
@@ -100,6 +96,20 @@ struct PersonalView: View {
                     PersonalGraphView(profile: profile)
                 }
             }
+        }
+    }
+
+    private var composeButton: some View {
+        Button {
+            showNewNote = true
+        } label: {
+            Image(systemName: "square.and.pencil")
+                .font(.system(size: 22, weight: .semibold))
+                .foregroundStyle(.white)
+                .frame(width: 60, height: 60)
+                .background(atlasPersonalCrimson)
+                .clipShape(Circle())
+                .shadow(color: atlasPersonalCrimson.opacity(0.35), radius: 16, y: 6)
         }
     }
 
