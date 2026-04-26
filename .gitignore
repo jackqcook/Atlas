@@ -1,0 +1,18 @@
+# Credentials
+**/Utils/Constants.swift
+
+# Xcode user state
+xcuserdata/
+*.xcuserstate
+*.xccheckout
+*.moved-aside
+
+# macOS
+.DS_Store
+
+# Swift Package Manager
+.build/
+.swiftpm/
+
+# DerivedData
+DerivedData/
