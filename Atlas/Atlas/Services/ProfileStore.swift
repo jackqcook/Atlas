@@ -18,6 +18,12 @@ enum PersonalNoteCategory: String, Codable, CaseIterable, Sendable, Hashable {
     }
 }
 
+enum LLMFeedbackStatus: String, Codable, Sendable, Hashable {
+    case none
+    case waiting
+    case responded
+}
+
 struct ProfileNoteCard: Identifiable, Codable, Equatable, Hashable, Sendable {
     let id: UUID
     var title: String
@@ -27,6 +33,9 @@ struct ProfileNoteCard: Identifiable, Codable, Equatable, Hashable, Sendable {
     var category: PersonalNoteCategory
     var tags: [String]
     var linkedNoteIDs: [UUID]
+    var llmFeedbackStatus: LLMFeedbackStatus
+    var llmFeedback: String
+    var llmFeedbackUpdatedAt: Date?
 
     init(
         id: UUID,
@@ -36,7 +45,10 @@ struct ProfileNoteCard: Identifiable, Codable, Equatable, Hashable, Sendable {
         updatedAt: Date,
         category: PersonalNoteCategory,
         tags: [String] = [],
-        linkedNoteIDs: [UUID] = []
+        linkedNoteIDs: [UUID] = [],
+        llmFeedbackStatus: LLMFeedbackStatus = .none,
+        llmFeedback: String = "",
+        llmFeedbackUpdatedAt: Date? = nil
     ) {
         self.id = id
         self.title = title
@@ -46,6 +58,9 @@ struct ProfileNoteCard: Identifiable, Codable, Equatable, Hashable, Sendable {
         self.category = category
         self.tags = tags
         self.linkedNoteIDs = linkedNoteIDs
+        self.llmFeedbackStatus = llmFeedbackStatus
+        self.llmFeedback = llmFeedback
+        self.llmFeedbackUpdatedAt = llmFeedbackUpdatedAt
     }
 
     init(from decoder: Decoder) throws {
@@ -58,6 +73,9 @@ struct ProfileNoteCard: Identifiable, Codable, Equatable, Hashable, Sendable {
         category = try container.decodeIfPresent(PersonalNoteCategory.self, forKey: .category) ?? .ideas
         tags = try container.decodeIfPresent([String].self, forKey: .tags) ?? []
         linkedNoteIDs = try container.decodeIfPresent([UUID].self, forKey: .linkedNoteIDs) ?? []
+        llmFeedbackStatus = try container.decodeIfPresent(LLMFeedbackStatus.self, forKey: .llmFeedbackStatus) ?? .none
+        llmFeedback = try container.decodeIfPresent(String.self, forKey: .llmFeedback) ?? ""
+        llmFeedbackUpdatedAt = try container.decodeIfPresent(Date.self, forKey: .llmFeedbackUpdatedAt)
     }
 }
 

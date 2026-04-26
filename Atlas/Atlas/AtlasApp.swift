@@ -21,6 +21,7 @@ struct AtlasApp: App {
                 }
             }
             .tint(atlasRed)
+            .font(.custom("Helvetica", size: 15))
             .task {
                 await authVM.checkSession()
             }

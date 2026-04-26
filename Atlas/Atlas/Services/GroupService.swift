@@ -31,6 +31,19 @@ final class GroupService {
             .value
     }
 
+    func fetchAllGroups() async throws -> [Group] {
+        if await DemoStore.shared.isEnabled {
+            return await DemoStore.shared.fetchAllGroups()
+        }
+
+        return try await supabase
+            .from("groups")
+            .select()
+            .order("created_at")
+            .execute()
+            .value
+    }
+
     func createGroup(name: String, description: String, founderID: UUID) async throws -> Group {
         if await DemoStore.shared.isEnabled {
             return await DemoStore.shared.createGroup(name: name, description: description, founderID: founderID)

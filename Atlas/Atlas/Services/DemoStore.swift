@@ -96,6 +96,10 @@ actor DemoStore {
             .sorted { $0.createdAt < $1.createdAt }
     }
 
+    func fetchAllGroups() -> [Group] {
+        groups.sorted { $0.createdAt < $1.createdAt }
+    }
+
     func createGroup(name: String, description: String, founderID: UUID) -> Group {
         let group = Group(
             id: UUID(),

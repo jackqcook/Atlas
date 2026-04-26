@@ -4,6 +4,7 @@ import Observation
 @Observable
 final class GroupViewModel {
     var groups: [Group] = []
+    var discoverableGroups: [Group] = []
     var isLoading = false
     var error: String?
 
@@ -25,6 +26,7 @@ final class GroupViewModel {
         do {
             let group = try await groupService.createGroup(name: name, description: description, founderID: founderID)
             groups.append(group)
+            discoverableGroups.append(group)
             isLoading = false
             return group
         } catch {
@@ -46,6 +48,14 @@ final class GroupViewModel {
             self.error = error.localizedDescription
             isLoading = false
             return nil
+        }
+    }
+
+    func loadDiscoverableGroups() async {
+        do {
+            discoverableGroups = try await groupService.fetchAllGroups()
+        } catch {
+            self.error = error.localizedDescription
         }
     }
 }

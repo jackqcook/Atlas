@@ -1,4 +1,5 @@
 import SwiftUI
+import PhotosUI
 
 private let atlasCreateCrimson = Color(red: 0.74, green: 0.05, blue: 0.16)
 
@@ -9,6 +10,10 @@ struct CreateGroupView: View {
     let onCreated: (Group) -> Void
     @State private var name = ""
     @State private var description = ""
+    @State private var territory: CommunityTerritory = .builders
+    @State private var donationURL = ""
+    @State private var selectedPhoto: PhotosPickerItem?
+    @State private var logoImageData: Data?
 
     var body: some View {
         NavigationStack {
@@ -21,6 +26,40 @@ struct CreateGroupView: View {
                         .font(.system(size: 15, weight: .medium))
                         .foregroundStyle(.secondary)
                 }
+
+                PhotosPicker(selection: $selectedPhoto, matching: .images) {
+                    HStack(spacing: 16) {
+                        ZStack {
+                            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                                .fill(atlasCreateCrimson.opacity(0.08))
+                                .frame(width: 74, height: 74)
+
+                            if let logoImageData, let image = UIImage(data: logoImageData) {
+                                Image(uiImage: image)
+                                    .resizable()
+                                    .scaledToFill()
+                                    .frame(width: 74, height: 74)
+                                    .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+                            } else {
+                                Image(systemName: "photo")
+                                    .font(.system(size: 24, weight: .semibold))
+                                    .foregroundStyle(atlasCreateCrimson)
+                            }
+                        }
+
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Community Logo")
+                                .font(.system(size: 16, weight: .semibold))
+                                .foregroundStyle(.black)
+                            Text("Add a mark so the group is recognizable across Atlas.")
+                                .font(.system(size: 13, weight: .medium))
+                                .foregroundStyle(.secondary)
+                        }
+
+                        Spacer()
+                    }
+                }
+                .buttonStyle(.plain)
 
                 VStack(alignment: .leading, spacing: 10) {
                     Text("Community Name")
@@ -42,6 +81,41 @@ struct CreateGroupView: View {
                         .foregroundStyle(atlasCreateCrimson)
                     TextField("What is this community for?", text: $description, axis: .vertical)
                         .lineLimit(3...5)
+                        .padding(14)
+                        .background(Color.white)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                .stroke(atlasCreateCrimson.opacity(0.24), lineWidth: 1)
+                        )
+                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                }
+
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Territory")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(atlasCreateCrimson)
+                    Picker("Territory", selection: $territory) {
+                        ForEach(CommunityTerritory.allCases, id: \.self) { option in
+                            Text(option.displayName).tag(option)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .padding(14)
+                    .background(Color.white)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .stroke(atlasCreateCrimson.opacity(0.24), lineWidth: 1)
+                    )
+                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                }
+
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Donation Link")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(atlasCreateCrimson)
+                    TextField("Optional treasury or donation URL", text: $donationURL)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
                         .padding(14)
                         .background(Color.white)
                         .overlay(
@@ -88,6 +162,16 @@ struct CreateGroupView: View {
                                 description: description.trimmingCharacters(in: .whitespacesAndNewlines),
                                 founderID: userID
                             ) {
+                                let profile = CommunityProfileRecord(
+                                    groupID: group.id,
+                                    territory: territory,
+                                    pitch: description.trimmingCharacters(in: .whitespacesAndNewlines),
+                                    focusTags: [territory.displayName.lowercased()],
+                                    donationURL: donationURL.trimmingCharacters(in: .whitespacesAndNewlines),
+                                    isDiscoverable: true,
+                                    logoImageData: logoImageData
+                                )
+                                CommunityProfileStore.shared.saveProfile(profile)
                                 onCreated(group)
                                 dismiss()
                             }
@@ -103,6 +187,12 @@ struct CreateGroupView: View {
                     Color.white.opacity(0.65).ignoresSafeArea()
                     ProgressView()
                         .tint(atlasCreateCrimson)
+                }
+            }
+            .onChange(of: selectedPhoto) { _, newValue in
+                guard let newValue else { return }
+                Task {
+                    logoImageData = try? await newValue.loadTransferable(type: Data.self)
                 }
             }
         }

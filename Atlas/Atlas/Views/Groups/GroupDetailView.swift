@@ -1,10 +1,12 @@
 import SwiftUI
+import PhotosUI
 
 private let atlasWorkspaceCrimson = Color(red: 0.74, green: 0.05, blue: 0.16)
 
 private enum WorkspaceDestination: Hashable {
     case channels
     case channel(UUID)
+    case community
     case constitution
     case advisors
     case agents
@@ -31,9 +33,12 @@ struct GroupDetailView: View {
     @State private var sidebarSelection: WorkspaceDestination = .channels
     @State private var showCreateChannel = false
     @State private var isSidebarOpen = false
+    @State private var showEditCommunity = false
+    @State private var communityProfile: CommunityProfileRecord
 
     private let sidebarItems: [SidebarItem] = [
         .init(title: "Channels", subtitle: "Rooms and discussion", systemImage: "number", destination: .channels),
+        .init(title: "Community", subtitle: "Identity and overview", systemImage: "building.2.fill", destination: .community),
         .init(title: "Constitution", subtitle: "Rules and principles", systemImage: "doc.text.fill", destination: .constitution),
         .init(title: "Advisors", subtitle: "Mentors and experts", systemImage: "person.2.crop.square.stack.fill", destination: .advisors),
         .init(title: "Agents", subtitle: "Operators and workflows", systemImage: "bolt.horizontal.circle.fill", destination: .agents),
@@ -42,6 +47,11 @@ struct GroupDetailView: View {
         .init(title: "Treasury", subtitle: "Funds and allocations", systemImage: "banknote.fill", destination: .treasury),
         .init(title: "Governance", subtitle: "Proposals and voting", systemImage: "building.columns.fill", destination: .governance)
     ]
+
+    init(group: Group) {
+        self.group = group
+        _communityProfile = State(initialValue: CommunityProfileStore.shared.loadProfile(for: group))
+    }
 
     var body: some View {
         ZStack(alignment: .leading) {
@@ -105,9 +115,15 @@ struct GroupDetailView: View {
                 }
             }
         }
+        .sheet(isPresented: $showEditCommunity) {
+            EditCommunityProfileSheet(group: group, profile: communityProfile) { updated in
+                communityProfile = updated
+            }
+        }
         .task {
             guard let userID = authVM.currentUser?.id else { return }
             await vm.load(groupID: group.id, userID: userID)
+            communityProfile = CommunityProfileStore.shared.loadProfile(for: group)
             sidebarSelection = destination
         }
         .simultaneousGesture(
@@ -140,6 +156,8 @@ struct GroupDetailView: View {
             } else {
                 channelsBrowser
             }
+        case .community:
+            communityPanel
         case .constitution:
             featurePanel(
                 title: "Constitution",
@@ -208,19 +226,124 @@ struct GroupDetailView: View {
     private var channelsBrowser: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 28) {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(group.name)
-                        .font(.system(size: 34, weight: .bold, design: .rounded))
-                        .foregroundStyle(.black)
-                    Text("\(vm.members.count) member\(vm.members.count == 1 ? "" : "s")")
-                        .font(.system(size: 16, weight: .medium))
-                        .foregroundStyle(.secondary)
-                }
+                communityIdentityHeader
 
                 searchRow
 
                 browserSection("Channels", channels: vm.channels(ofType: .general))
                 browserSection("Announcements", channels: vm.channels(ofType: .announcements))
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 20)
+            .padding(.bottom, 120)
+        }
+        .background(Color.white)
+    }
+
+    private var communityIdentityHeader: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(alignment: .center, spacing: 16) {
+                WorkspaceCommunityArtworkView(profile: communityProfile, group: group, size: 78, cornerRadius: 24)
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(group.name)
+                        .font(.system(size: 30, weight: .bold))
+                        .foregroundStyle(.black)
+                    HStack(spacing: 8) {
+                        Text(communityProfile.territory.displayName)
+                            .font(.system(size: 12, weight: .bold))
+                            .foregroundStyle(atlasWorkspaceCrimson)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(atlasWorkspaceCrimson.opacity(0.08))
+                            .clipShape(Capsule())
+
+                        Text("\(vm.members.count) member\(vm.members.count == 1 ? "" : "s")")
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                Spacer()
+            }
+
+            if !communityProfile.pitch.isEmpty {
+                Text(communityProfile.pitch)
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            if canEditCommunityProfile {
+                manageCommunityButton
+            }
+        }
+    }
+
+    private var communityPanel: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 22) {
+                HStack(alignment: .center, spacing: 16) {
+                    WorkspaceCommunityArtworkView(profile: communityProfile, group: group, size: 92, cornerRadius: 28)
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(group.name)
+                            .font(.system(size: 30, weight: .bold))
+                            .foregroundStyle(.black)
+                        Text(communityProfile.territory.displayName)
+                            .font(.system(size: 13, weight: .bold))
+                            .foregroundStyle(atlasWorkspaceCrimson)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(atlasWorkspaceCrimson.opacity(0.08))
+                            .clipShape(Capsule())
+                    }
+
+                    Spacer()
+                }
+
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("About")
+                        .font(.system(size: 18, weight: .bold))
+                        .foregroundStyle(.black)
+                    Text(communityProfile.pitch.isEmpty ? (group.description.isEmpty ? "This community has not added a description yet." : group.description) : communityProfile.pitch)
+                        .font(.system(size: 15, weight: .medium))
+                        .foregroundStyle(.black.opacity(0.82))
+                        .lineSpacing(3)
+                }
+
+                if !communityProfile.focusTags.isEmpty {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Focus")
+                            .font(.system(size: 18, weight: .bold))
+                            .foregroundStyle(.black)
+
+                        FlexibleTagRow(tags: communityProfile.focusTags)
+                    }
+                }
+
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Treasury")
+                        .font(.system(size: 18, weight: .bold))
+                        .foregroundStyle(.black)
+                    Text("Coming soon")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(atlasWorkspaceCrimson)
+                }
+
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Permissions")
+                        .font(.system(size: 18, weight: .bold))
+                        .foregroundStyle(.black)
+                    Text(permissionSummary)
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .lineSpacing(3)
+                }
+
+                if canEditCommunityProfile {
+                    manageCommunityButton
+                }
             }
             .padding(.horizontal, 20)
             .padding(.top, 20)
@@ -404,12 +527,18 @@ struct GroupDetailView: View {
                 }
 
                 VStack(alignment: .leading, spacing: 8) {
-                    Text(group.name)
-                        .font(.system(size: 28, weight: .bold, design: .rounded))
-                        .foregroundStyle(.black)
-                    Text("Community navigation")
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundStyle(.secondary)
+                    HStack(spacing: 14) {
+                        WorkspaceCommunityArtworkView(profile: communityProfile, group: group, size: 54, cornerRadius: 18)
+
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(group.name)
+                                .font(.system(size: 24, weight: .bold))
+                                .foregroundStyle(.black)
+                            Text(communityProfile.territory.displayName)
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(atlasWorkspaceCrimson)
+                        }
+                    }
                 }
             }
             .padding(.horizontal, 22)
@@ -480,6 +609,7 @@ struct GroupDetailView: View {
     private func activeSidebarDestination(_ value: WorkspaceDestination) -> Bool {
         switch (sidebarSelection, value) {
         case (.channels, .channels),
+            (.community, .community),
             (.constitution, .constitution),
             (.advisors, .advisors),
             (.agents, .agents),
@@ -519,6 +649,33 @@ struct GroupDetailView: View {
         vm.myMembership?.role == .founder || vm.myMembership?.role == .council
     }
 
+    private var canEditCommunityProfile: Bool {
+        canCreateChannels
+    }
+
+    private var permissionSummary: String {
+        if canEditCommunityProfile {
+            return "You can update the community identity because your role has management access."
+        }
+        return "Only the founder and promoted community leaders can change the logo, territory, tags, and other core community details."
+    }
+
+    private var manageCommunityButton: some View {
+        Button("Edit Community") {
+            showEditCommunity = true
+        }
+        .font(.system(size: 14, weight: .semibold))
+        .foregroundStyle(atlasWorkspaceCrimson)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(Color.white)
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(atlasWorkspaceCrimson.opacity(0.22), lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+
     private var isChannelSurface: Bool {
         switch destination {
         case .channels, .channel:
@@ -538,12 +695,213 @@ struct GroupDetailView: View {
     }
 }
 
+private struct WorkspaceCommunityArtworkView: View {
+    let profile: CommunityProfileRecord
+    let group: Group
+    let size: CGFloat
+    let cornerRadius: CGFloat
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+            .fill(
+                LinearGradient(
+                    colors: [atlasWorkspaceCrimson.opacity(0.14), atlasWorkspaceCrimson.opacity(0.06)],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+            )
+            .frame(width: size, height: size)
+            .overlay {
+                if let data = profile.logoImageData, let image = UIImage(data: data) {
+                    Image(uiImage: image)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: size, height: size)
+                        .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+                } else {
+                    Text(String(group.name.prefix(1)).uppercased())
+                        .font(.system(size: size * 0.38, weight: .bold))
+                        .foregroundStyle(atlasWorkspaceCrimson)
+                }
+            }
+    }
+}
+
+private struct FlexibleTagRow: View {
+    let tags: [String]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach(chunkedTags, id: \.self) { row in
+                HStack(spacing: 8) {
+                    ForEach(row, id: \.self) { tag in
+                        Text("#\(tag)")
+                            .font(.system(size: 12, weight: .bold))
+                            .foregroundStyle(atlasWorkspaceCrimson)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 8)
+                            .background(atlasWorkspaceCrimson.opacity(0.08))
+                            .clipShape(Capsule())
+                    }
+                    Spacer(minLength: 0)
+                }
+            }
+        }
+    }
+
+    private var chunkedTags: [[String]] {
+        stride(from: 0, to: tags.count, by: 3).map { start in
+            Array(tags[start..<min(start + 3, tags.count)])
+        }
+    }
+}
+
 private extension WorkspaceDestination {
     var isChannel: Bool {
         if case .channel = self {
             return true
         }
         return false
+    }
+}
+
+private struct EditCommunityProfileSheet: View {
+    let group: Group
+    let onSave: (CommunityProfileRecord) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var draft: CommunityProfileRecord
+    @State private var selectedPhoto: PhotosPickerItem?
+
+    init(group: Group, profile: CommunityProfileRecord, onSave: @escaping (CommunityProfileRecord) -> Void) {
+        self.group = group
+        self.onSave = onSave
+        _draft = State(initialValue: profile)
+    }
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    PhotosPicker(selection: $selectedPhoto, matching: .images) {
+                        HStack(spacing: 16) {
+                            WorkspaceCommunityArtworkView(profile: draft, group: group, size: 78, cornerRadius: 24)
+
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Community Logo")
+                                    .font(.system(size: 16, weight: .semibold))
+                                    .foregroundStyle(.black)
+                                Text("Give the workspace a recognizable identity.")
+                                    .font(.system(size: 13, weight: .medium))
+                                    .foregroundStyle(.secondary)
+                            }
+
+                            Spacer()
+                        }
+                    }
+                    .buttonStyle(.plain)
+
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Territory")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(atlasWorkspaceCrimson)
+                        Picker("Territory", selection: $draft.territory) {
+                            ForEach(CommunityTerritory.allCases, id: \.self) { territory in
+                                Text(territory.displayName).tag(territory)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        .padding(14)
+                        .background(Color.white)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                .stroke(atlasWorkspaceCrimson.opacity(0.24), lineWidth: 1)
+                        )
+                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    }
+
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Pitch")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(atlasWorkspaceCrimson)
+                        TextField("What makes this community worth joining?", text: $draft.pitch, axis: .vertical)
+                            .lineLimit(3...5)
+                            .padding(14)
+                            .background(Color.white)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                    .stroke(atlasWorkspaceCrimson.opacity(0.24), lineWidth: 1)
+                            )
+                            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    }
+
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Focus Tags")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(atlasWorkspaceCrimson)
+                        TextField("builders, byu, ai", text: focusTagsBinding)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .padding(14)
+                            .background(Color.white)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                    .stroke(atlasWorkspaceCrimson.opacity(0.24), lineWidth: 1)
+                            )
+                            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    }
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Treasury")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(atlasWorkspaceCrimson)
+                        Text("Coming soon")
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .padding(20)
+            }
+            .background(Color.white.ignoresSafeArea())
+            .navigationTitle("Edit Community")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                        .foregroundStyle(atlasWorkspaceCrimson)
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") {
+                        let trimmed = draft.focusTags
+                            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                            .filter { !$0.isEmpty }
+                        draft.focusTags = Array(Set(trimmed)).sorted()
+                        CommunityProfileStore.shared.saveProfile(draft)
+                        onSave(draft)
+                        dismiss()
+                    }
+                    .foregroundStyle(atlasWorkspaceCrimson)
+                    .fontWeight(.semibold)
+                }
+            }
+            .onChange(of: selectedPhoto) { _, newValue in
+                guard let newValue else { return }
+                Task {
+                    draft.logoImageData = try? await newValue.loadTransferable(type: Data.self)
+                }
+            }
+        }
+    }
+
+    private var focusTagsBinding: Binding<String> {
+        Binding(
+            get: { draft.focusTags.joined(separator: ", ") },
+            set: { value in
+                draft.focusTags = value
+                    .split(separator: ",")
+                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+                    .filter { !$0.isEmpty }
+            }
+        )
     }
 }
 
