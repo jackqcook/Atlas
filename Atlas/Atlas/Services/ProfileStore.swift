@@ -1,6 +1,6 @@
 import Foundation
 
-enum PersonalNoteCategory: String, Codable, CaseIterable, Sendable {
+enum PersonalNoteCategory: String, Codable, CaseIterable, Sendable, Hashable {
     case goals
     case projects
     case connections
@@ -18,7 +18,7 @@ enum PersonalNoteCategory: String, Codable, CaseIterable, Sendable {
     }
 }
 
-struct ProfileNoteCard: Identifiable, Codable, Equatable, Sendable {
+struct ProfileNoteCard: Identifiable, Codable, Equatable, Hashable, Sendable {
     let id: UUID
     var title: String
     var prompt: String

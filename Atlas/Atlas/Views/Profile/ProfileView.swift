@@ -3,18 +3,22 @@ import PhotosUI
 
 private let atlasPersonalCrimson = Color(red: 0.74, green: 0.05, blue: 0.16)
 
+private enum NoteDestination: Hashable {
+    case existing(ProfileNoteCard)
+    case new(ProfileNoteCard)
+}
+
 struct PersonalView: View {
     @Environment(AuthViewModel.self) private var authVM
     @State private var profile: UserProfileRecord?
+    @State private var path = NavigationPath()
     @State private var showEditProfile = false
-    @State private var editingNote: ProfileNoteCard?
-    @State private var showNewNote = false
     @State private var showGrowthMap = false
     @State private var searchText = ""
     @State private var selectedCategory: PersonalNoteCategory?
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             ZStack(alignment: .bottomTrailing) {
                 ScrollView {
                     if let profile {
@@ -53,6 +57,19 @@ struct PersonalView: View {
             .task {
                 await loadProfile()
             }
+            .navigationDestination(for: NoteDestination.self) { destination in
+                let isNew = { if case .new = destination { return true }; return false }()
+                let note = { switch destination { case .existing(let n): return n; case .new(let n): return n } }()
+                PersonalNoteEditor(
+                    note: note,
+                    allNotes: profile?.notes ?? [],
+                    isNew: isNew
+                ) { saved in
+                    Task {
+                        if isNew { await addNote(saved) } else { await saveNote(saved) }
+                    }
+                }
+            }
             .sheet(isPresented: $showEditProfile) {
                 if let user = authVM.currentUser, let profile {
                     EditPersonalProfileSheet(
@@ -60,34 +77,6 @@ struct PersonalView: View {
                         initialDisplayName: user.displayName
                     ) { updated in
                         Task { await saveProfile(updated) }
-                    }
-                }
-            }
-            .sheet(item: $editingNote) { note in
-                if let profile {
-                    PersonalNoteEditor(
-                        note: note,
-                        allNotes: profile.notes
-                    ) { updated in
-                        Task { await saveNote(updated) }
-                    }
-                }
-            }
-            .sheet(isPresented: $showNewNote) {
-                if let profile {
-                    PersonalNoteEditor(
-                        note: ProfileNoteCard(
-                            id: UUID(),
-                            title: "",
-                            prompt: "Capture something worth revisiting.",
-                            body: "",
-                            updatedAt: Date(),
-                            category: selectedCategory ?? .ideas
-                        ),
-                        allNotes: profile.notes,
-                        isNew: true
-                    ) { created in
-                        Task { await addNote(created) }
                     }
                 }
             }
@@ -101,7 +90,15 @@ struct PersonalView: View {
 
     private var composeButton: some View {
         Button {
-            showNewNote = true
+            let draft = ProfileNoteCard(
+                id: UUID(),
+                title: "",
+                prompt: "Capture something worth revisiting.",
+                body: "",
+                updatedAt: Date(),
+                category: selectedCategory ?? .ideas
+            )
+            path.append(NoteDestination.new(draft))
         } label: {
             Image(systemName: "square.and.pencil")
                 .font(.system(size: 22, weight: .semibold))
@@ -157,7 +154,7 @@ struct PersonalView: View {
 
             ForEach(Array(filteredNotes.prefix(8).enumerated()), id: \.element.id) { index, note in
                 Button {
-                    editingNote = note
+                    path.append(NoteDestination.existing(note))
                 } label: {
                     VStack(alignment: .leading, spacing: 6) {
                         Text(note.title)
@@ -493,6 +490,7 @@ private struct EditPersonalProfileSheet: View {
 private struct PersonalNoteEditor: View {
     @Environment(\.dismiss) private var dismiss
     @State private var draft: ProfileNoteCard
+    @State private var hasSaved = false
     let allNotes: [ProfileNoteCard]
     let isNew: Bool
     let onSave: (ProfileNoteCard) -> Void
@@ -510,147 +508,134 @@ private struct PersonalNoteEditor: View {
     }
 
     var body: some View {
-        NavigationStack {
-            VStack(spacing: 0) {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 18) {
-                        Text(draft.updatedAt.formatted(date: .long, time: .shortened))
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundStyle(.secondary)
-                            .frame(maxWidth: .infinity, alignment: .center)
-                            .padding(.top, 6)
+        VStack(spacing: 0) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    Text(draft.updatedAt.formatted(date: .long, time: .shortened))
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .center)
+                        .padding(.top, 6)
 
-                        TextField("Title", text: $draft.title)
-                            .font(.system(size: 38, weight: .bold, design: .rounded))
-                            .foregroundStyle(.black)
+                    TextField("Title", text: $draft.title)
+                        .font(.system(size: 38, weight: .bold, design: .rounded))
+                        .foregroundStyle(.black)
 
-                        TextField("Optional note prompt", text: $draft.prompt)
-                            .font(.system(size: 16, weight: .medium))
-                            .foregroundStyle(.secondary)
+                    TextField("Optional note prompt", text: $draft.prompt)
+                        .font(.system(size: 16, weight: .medium))
+                        .foregroundStyle(.secondary)
 
-                        TextEditor(text: $draft.body)
-                            .font(.system(size: 22, weight: .regular, design: .rounded))
-                            .scrollContentBackground(.hidden)
-                            .frame(minHeight: 340)
+                    TextEditor(text: $draft.body)
+                        .font(.system(size: 22, weight: .regular, design: .rounded))
+                        .scrollContentBackground(.hidden)
+                        .frame(minHeight: 340)
 
-                        VStack(alignment: .leading, spacing: 10) {
-                            Text("Linked Notes")
-                                .font(.system(size: 15, weight: .bold))
-                                .foregroundStyle(atlasPersonalCrimson)
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Linked Notes")
+                            .font(.system(size: 15, weight: .bold))
+                            .foregroundStyle(atlasPersonalCrimson)
 
-                            ForEach(allNotes.filter { $0.id != draft.id }) { note in
-                                Button {
-                                    toggleLink(note.id)
-                                } label: {
-                                    HStack {
-                                        VStack(alignment: .leading, spacing: 3) {
-                                            Text(note.title)
-                                                .font(.system(size: 16, weight: .semibold))
-                                                .foregroundStyle(.black)
-                                            Text(note.category.displayName)
-                                                .font(.system(size: 12, weight: .bold))
-                                                .foregroundStyle(atlasPersonalCrimson)
-                                        }
-
-                                        Spacer()
-
-                                        Image(systemName: draft.linkedNoteIDs.contains(note.id) ? "checkmark.circle.fill" : "circle")
-                                            .font(.system(size: 20, weight: .semibold))
-                                            .foregroundStyle(draft.linkedNoteIDs.contains(note.id) ? atlasPersonalCrimson : .secondary)
+                        ForEach(allNotes.filter { $0.id != draft.id }) { note in
+                            Button {
+                                toggleLink(note.id)
+                            } label: {
+                                HStack {
+                                    VStack(alignment: .leading, spacing: 3) {
+                                        Text(note.title)
+                                            .font(.system(size: 16, weight: .semibold))
+                                            .foregroundStyle(.black)
+                                        Text(note.category.displayName)
+                                            .font(.system(size: 12, weight: .bold))
+                                            .foregroundStyle(atlasPersonalCrimson)
                                     }
-                                    .padding(.vertical, 6)
+
+                                    Spacer()
+
+                                    Image(systemName: draft.linkedNoteIDs.contains(note.id) ? "checkmark.circle.fill" : "circle")
+                                        .font(.system(size: 20, weight: .semibold))
+                                        .foregroundStyle(draft.linkedNoteIDs.contains(note.id) ? atlasPersonalCrimson : .secondary)
                                 }
-                                .buttonStyle(.plain)
+                                .padding(.vertical, 6)
                             }
+                            .buttonStyle(.plain)
                         }
                     }
-                    .padding(.horizontal, 20)
-                    .padding(.bottom, 120)
                 }
-                bottomAccessoryBar
+                .padding(.horizontal, 20)
+                .padding(.bottom, 120)
             }
-            .background(Color(red: 1.0, green: 0.998, blue: 0.992).ignoresSafeArea())
-            .navigationTitle(isNew ? "New Note" : (draft.title.isEmpty ? "Note" : draft.title))
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button {
-                        dismiss()
-                    } label: {
-                        Image(systemName: "chevron.left")
-                            .font(.system(size: 18, weight: .bold))
-                            .foregroundStyle(.black)
-                    }
-                }
-                ToolbarItem(placement: .topBarTrailing) {
-                    HStack(spacing: 18) {
-                        Image(systemName: "square.and.arrow.up")
-                            .font(.system(size: 20, weight: .medium))
-                            .foregroundStyle(.black)
-                        Image(systemName: "ellipsis")
-                            .font(.system(size: 20, weight: .bold))
-                            .foregroundStyle(.black)
-                    }
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") {
-                        saveAndDismiss()
-                    }
-                    .foregroundStyle(atlasPersonalCrimson)
+            .scrollDismissesKeyboard(.interactively)
+            bottomAccessoryBar
+        }
+        .background(Color(red: 1.0, green: 0.998, blue: 0.992).ignoresSafeArea())
+        .navigationTitle(isNew ? "New Note" : (draft.title.isEmpty ? "Note" : draft.title))
+        .navigationBarTitleDisplayMode(.inline)
+        .navigationBarBackButtonHidden(false)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                HStack(spacing: 18) {
+                    Image(systemName: "square.and.arrow.up")
+                        .font(.system(size: 20, weight: .medium))
+                        .foregroundStyle(.black)
+                    Image(systemName: "ellipsis")
+                        .font(.system(size: 20, weight: .bold))
+                        .foregroundStyle(.black)
                 }
             }
+            ToolbarItem(placement: .confirmationAction) {
+                Button("Done") {
+                    saveAndDismiss()
+                }
+                .foregroundStyle(atlasPersonalCrimson)
+            }
+        }
+        .onDisappear {
+            guard !hasSaved else { return }
+            autoSave()
         }
     }
 
     private var bottomAccessoryBar: some View {
-        HStack {
-            HStack(spacing: 28) {
-                Image(systemName: "checklist")
-                Image(systemName: "paperclip")
-                Image(systemName: "pencil.tip.crop.circle")
-            }
-            .font(.system(size: 22, weight: .medium))
-            .foregroundStyle(.black)
-            .padding(.horizontal, 24)
-            .padding(.vertical, 18)
-            .background(Color.white)
-            .overlay(
-                Capsule()
-                    .stroke(Color.black.opacity(0.06), lineWidth: 1)
-            )
-            .shadow(color: .black.opacity(0.05), radius: 16, y: 10)
-
-            Spacer()
-
-            Button {
-                saveAndDismiss()
-            } label: {
-                Image(systemName: "square.and.pencil")
-                    .font(.system(size: 24, weight: .medium))
-                    .foregroundStyle(.black)
-                    .frame(width: 68, height: 68)
-                    .background(Color.white)
-                    .overlay(
-                        Circle()
-                            .stroke(Color.black.opacity(0.06), lineWidth: 1)
-                    )
-                    .shadow(color: .black.opacity(0.05), radius: 16, y: 10)
-            }
-            .buttonStyle(.plain)
+        HStack(spacing: 28) {
+            Image(systemName: "checklist")
+            Image(systemName: "paperclip")
+            Image(systemName: "pencil.tip.crop.circle")
         }
+        .font(.system(size: 22, weight: .medium))
+        .foregroundStyle(.black)
+        .padding(.horizontal, 24)
+        .padding(.vertical, 18)
+        .background(Color.white)
+        .overlay(
+            Capsule()
+                .stroke(Color.black.opacity(0.06), lineWidth: 1)
+        )
+        .shadow(color: .black.opacity(0.05), radius: 16, y: 10)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 20)
         .padding(.bottom, 22)
         .padding(.top, 12)
-        .background(Color.clear)
     }
 
     private func saveAndDismiss() {
+        hasSaved = true
         draft.updatedAt = Date()
         if draft.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             draft.title = "Untitled Note"
         }
         onSave(draft)
         dismiss()
+    }
+
+    private func autoSave() {
+        let hasContent = !draft.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+                         !draft.body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        guard hasContent else { return }
+        draft.updatedAt = Date()
+        if draft.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            draft.title = "Untitled Note"
+        }
+        onSave(draft)
     }
 
     private func toggleLink(_ id: UUID) {
