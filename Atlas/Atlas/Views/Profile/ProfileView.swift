@@ -19,10 +19,11 @@ struct PersonalView: View {
                 if let profile {
                     VStack(alignment: .leading, spacing: 24) {
                         growthMapRow
+                            .padding(.horizontal, 20)
                         recentsSection(profile: profile)
                         collectionsSection(profile: profile)
+                            .padding(.horizontal, 20)
                     }
-                    .padding(.horizontal, 20)
                     .padding(.top, 18)
                     .padding(.bottom, 42)
                 }
@@ -139,41 +140,39 @@ struct PersonalView: View {
     }
 
     private func recentsSection(profile: UserProfileRecord) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 0) {
             sectionTitle(selectedCategory == nil ? "Recents" : "\(selectedCategory?.displayName ?? "") Notes")
+                .padding(.horizontal, 20)
+                .padding(.bottom, 14)
 
             ForEach(Array(filteredNotes.prefix(8).enumerated()), id: \.element.id) { index, note in
                 Button {
                     editingNote = note
                 } label: {
-                    HStack {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text(note.title)
-                                .font(.system(size: 19, weight: .semibold))
-                                .foregroundStyle(.black)
-                            HStack(spacing: 8) {
-                                Text(note.category.displayName)
-                                    .font(.system(size: 12, weight: .bold))
-                                    .foregroundStyle(atlasPersonalCrimson)
-                                if let firstTag = note.tags.first {
-                                    Text("#\(firstTag)")
-                                        .font(.system(size: 12, weight: .bold))
-                                        .foregroundStyle(.secondary)
-                                }
-                                Text(note.updatedAt.formatted(date: .abbreviated, time: .omitted))
-                                    .font(.system(size: 12, weight: .medium))
-                                    .foregroundStyle(.secondary)
-                            }
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(note.title)
+                            .font(.system(size: 19, weight: .semibold))
+                            .foregroundStyle(.black)
+                        HStack(spacing: 8) {
+                            Text(note.category.displayName)
+                                .font(.system(size: 12, weight: .bold))
+                                .foregroundStyle(atlasPersonalCrimson)
+                            Text(note.updatedAt.formatted(date: .abbreviated, time: .omitted))
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundStyle(.secondary)
                         }
-
-                        Spacer()
                     }
-                    .padding(.horizontal, 16)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 20)
                     .padding(.vertical, 14)
                     .background(index == 0 ? Color(red: 0.95, green: 0.95, blue: 0.96) : Color.clear)
-                    .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
                 }
                 .buttonStyle(.plain)
+
+                if index < filteredNotes.prefix(8).count - 1 {
+                    Divider()
+                        .padding(.leading, 20)
+                }
             }
         }
     }
@@ -301,29 +300,13 @@ struct PersonalView: View {
         if let index = profile.notes.firstIndex(where: { $0.id == note.id }) {
             profile.notes[index] = note
         }
-        normalizeTags(&profile)
         await saveProfile(profile)
     }
 
     private func addNote(_ note: ProfileNoteCard) async {
         guard var profile else { return }
         profile.notes.insert(note, at: 0)
-        normalizeTags(&profile)
         await saveProfile(profile)
-    }
-
-    private func normalizeTags(_ profile: inout UserProfileRecord) {
-        profile.notes = profile.notes.map { note in
-            var updated = note
-            let categoryTag = note.category.displayName.lowercased()
-            var tags = updated.tags.map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
-                .filter { !$0.isEmpty }
-            if !tags.contains(categoryTag) {
-                tags.insert(categoryTag, at: 0)
-            }
-            updated.tags = Array(NSOrderedSet(array: tags)) as? [String] ?? tags
-            return updated
-        }
     }
 }
 
@@ -500,7 +483,6 @@ private struct EditPersonalProfileSheet: View {
 private struct PersonalNoteEditor: View {
     @Environment(\.dismiss) private var dismiss
     @State private var draft: ProfileNoteCard
-    @State private var tagsText: String
     let allNotes: [ProfileNoteCard]
     let isNew: Bool
     let onSave: (ProfileNoteCard) -> Void
@@ -512,7 +494,6 @@ private struct PersonalNoteEditor: View {
         onSave: @escaping (ProfileNoteCard) -> Void
     ) {
         _draft = State(initialValue: note)
-        _tagsText = State(initialValue: note.tags.filter { $0 != note.category.displayName.lowercased() }.joined(separator: ", "))
         self.allNotes = allNotes
         self.isNew = isNew
         self.onSave = onSave
@@ -541,23 +522,6 @@ private struct PersonalNoteEditor: View {
                             .font(.system(size: 22, weight: .regular, design: .rounded))
                             .scrollContentBackground(.hidden)
                             .frame(minHeight: 340)
-
-                        VStack(alignment: .leading, spacing: 12) {
-                            Picker("Category", selection: $draft.category) {
-                                ForEach(PersonalNoteCategory.allCases, id: \.self) { category in
-                                    Text(category.displayName).tag(category)
-                                }
-                            }
-                            .pickerStyle(.segmented)
-
-                            TextField("Extra tags, comma separated", text: $tagsText)
-                                .font(.system(size: 15, weight: .medium))
-                                .padding(.horizontal, 14)
-                                .padding(.vertical, 12)
-                                .background(Color(red: 0.985, green: 0.985, blue: 0.99))
-                                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-                        }
-                        .padding(.top, 10)
 
                         VStack(alignment: .leading, spacing: 10) {
                             Text("Linked Notes")
@@ -675,12 +639,6 @@ private struct PersonalNoteEditor: View {
         if draft.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             draft.title = "Untitled Note"
         }
-        let extraTags = tagsText
-            .split(separator: ",")
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
-            .filter { !$0.isEmpty }
-        draft.tags = [draft.category.displayName.lowercased()] + extraTags
-        draft.tags = Array(NSOrderedSet(array: draft.tags)) as? [String] ?? draft.tags
         onSave(draft)
         dismiss()
     }
