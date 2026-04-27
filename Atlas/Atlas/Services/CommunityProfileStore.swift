@@ -87,8 +87,13 @@ final class CommunityProfileStore {
 
     private let keyPrefix = "atlas.community.profile."
     private let requestPrefix = "atlas.community.request."
+    private var cachedProfiles: [UUID: CommunityProfileRecord] = [:]
 
     func loadProfile(for group: Group) -> CommunityProfileRecord {
+        if let cached = cachedProfiles[group.id] {
+            return cached
+        }
+
         let key = keyPrefix + group.id.uuidString
         guard let data = UserDefaults.standard.data(forKey: key),
               let stored = try? JSONDecoder().decode(CommunityProfileRecord.self, from: data) else {
@@ -96,6 +101,7 @@ final class CommunityProfileStore {
             saveProfile(seed)
             return seed
         }
+        cachedProfiles[group.id] = stored
         return stored
     }
 
@@ -104,6 +110,7 @@ final class CommunityProfileStore {
     }
 
     func saveProfile(_ profile: CommunityProfileRecord) {
+        cachedProfiles[profile.groupID] = profile
         let key = keyPrefix + profile.groupID.uuidString
         guard let data = try? JSONEncoder().encode(profile) else { return }
         UserDefaults.standard.set(data, forKey: key)

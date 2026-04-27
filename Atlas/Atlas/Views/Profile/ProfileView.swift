@@ -27,6 +27,8 @@ extension NoteDestination: Identifiable {
 struct PersonalView: View {
     @Environment(AuthViewModel.self) private var authVM
     @State private var profile: UserProfileRecord?
+    @State private var avatarImage: UIImage?
+    @State private var filteredNotesCache: [ProfileNoteCard] = []
     @State private var showEditProfile = false
     @State private var showMindMap = false
     @State private var showThoughts = false
@@ -49,8 +51,14 @@ struct PersonalView: View {
             .background(Color(red: 1.0, green: 0.998, blue: 0.992).ignoresSafeArea())
             .navigationBarTitleDisplayMode(.inline)
             .toolbar(.hidden, for: .navigationBar)
-            .task {
-                await loadProfile()
+            .task(id: authVM.currentUser?.id) {
+                await loadProfileIfNeeded()
+            }
+            .onChange(of: searchText) { _, _ in
+                refreshVisibleNotes()
+            }
+            .onChange(of: selectedCategory) { _, _ in
+                refreshVisibleNotes()
             }
             .fullScreenCover(isPresented: $showEditProfile) {
                 if let user = authVM.currentUser, let profile {
@@ -74,7 +82,6 @@ struct PersonalView: View {
                 NavigationStack {
                     PersonalNoteEditor(
                         note: destination.note,
-                        allNotes: profile?.notes ?? [],
                         isNew: destination.isNew
                     ) { saved in
                         Task {
@@ -717,19 +724,7 @@ struct PersonalView: View {
     }
 
     private var filteredNotes: [ProfileNoteCard] {
-        let base = profile?.notes
-            .filter(noteHasContent)
-            .sorted(by: { $0.updatedAt > $1.updatedAt }) ?? []
-
-        return base.filter { note in
-            let categoryMatches = selectedCategory == nil || note.category == selectedCategory
-            let searchMatches =
-                searchText.isEmpty ||
-                displayTitle(for: note).localizedCaseInsensitiveContains(searchText) ||
-                note.body.localizedCaseInsensitiveContains(searchText) ||
-                note.tags.contains(where: { $0.localizedCaseInsensitiveContains(searchText) })
-            return categoryMatches && searchMatches
-        }
+        filteredNotesCache
     }
 
     private func select(_ note: ProfileNoteCard) {
@@ -775,9 +770,14 @@ struct PersonalView: View {
         }
 
         normalizeTags(&profile)
-        ProfileStore.shared.saveProfile(profile)
         self.profile = profile
+        refreshVisibleNotes(with: profile)
         activeNoteID = draft.id
+        let note = draft
+        let userID = profile.userID
+        Task {
+            await ProfileStore.shared.upsertNote(note, for: userID)
+        }
     }
 
     private func noteHasContent(_ note: ProfileNoteCard) -> Bool {
@@ -798,9 +798,13 @@ struct PersonalView: View {
 
     private func delete(_ note: ProfileNoteCard) {
         guard var profile else { return }
+        let userID = profile.userID
         profile.notes.removeAll { $0.id == note.id }
-        ProfileStore.shared.saveProfile(profile)
         self.profile = profile
+        refreshVisibleNotes(with: profile)
+        Task {
+            await ProfileStore.shared.deleteNote(note.id, for: userID)
+        }
 
         if activeNoteID == note.id || draft.id == note.id {
             activeNoteID = nil
@@ -857,17 +861,23 @@ struct PersonalView: View {
         }
     }
 
-    private func loadProfile() async {
+    private func loadProfileIfNeeded() async {
         guard let user = authVM.currentUser else { return }
-        let loaded = ProfileStore.shared.loadProfile(for: user)
+        guard profile?.userID != user.id else { return }
+
+        let loaded = await ProfileStore.shared.loadProfile(for: user)
         profile = loaded
+        avatarImage = loaded.avatarImageData.flatMap(UIImage.init(data:))
+        refreshVisibleNotes(with: loaded)
         activeNoteID = nil
         draft = Self.blankNote()
     }
 
     private func saveProfile(_ updated: UserProfileRecord) async {
-        ProfileStore.shared.saveProfile(updated)
         profile = updated
+        avatarImage = updated.avatarImageData.flatMap(UIImage.init(data:))
+        refreshVisibleNotes(with: updated)
+        await ProfileStore.shared.saveProfile(updated)
     }
 
     private func saveNote(_ note: ProfileNoteCard) async {
@@ -876,14 +886,39 @@ struct PersonalView: View {
             profile.notes[index] = note
         }
         normalizeTags(&profile)
-        await saveProfile(profile)
+        self.profile = profile
+        refreshVisibleNotes(with: profile)
+        guard let updatedNote = profile.notes.first(where: { $0.id == note.id }) else { return }
+        await ProfileStore.shared.upsertNote(updatedNote, for: profile.userID)
     }
 
     private func addNote(_ note: ProfileNoteCard) async {
         guard var profile else { return }
         profile.notes.insert(note, at: 0)
         normalizeTags(&profile)
-        await saveProfile(profile)
+        self.profile = profile
+        refreshVisibleNotes(with: profile)
+        guard let updatedNote = profile.notes.first(where: { $0.id == note.id }) else { return }
+        await ProfileStore.shared.upsertNote(updatedNote, for: profile.userID)
+    }
+
+    private func refreshVisibleNotes(with profile: UserProfileRecord? = nil) {
+        let source = profile ?? self.profile
+        let search = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        let base = source?.notes
+            .filter(noteHasContent)
+            .sorted(by: { $0.updatedAt > $1.updatedAt }) ?? []
+
+        filteredNotesCache = base.filter { note in
+            let categoryMatches = selectedCategory == nil || note.category == selectedCategory
+            let searchMatches =
+                search.isEmpty ||
+                displayTitle(for: note).localizedCaseInsensitiveContains(search) ||
+                note.body.localizedCaseInsensitiveContains(search) ||
+                note.tags.contains(where: { $0.localizedCaseInsensitiveContains(search) })
+            return categoryMatches && searchMatches
+        }
     }
 
     private func normalizeTags(_ profile: inout UserProfileRecord) {
@@ -948,7 +983,13 @@ struct PersonalView: View {
 
     @ViewBuilder
     private func avatarView(user: User, profile: UserProfileRecord, size: CGFloat) -> some View {
-        if let data = profile.avatarImageData, let uiImage = UIImage(data: data) {
+        if let avatarImage {
+            Image(uiImage: avatarImage)
+                .resizable()
+                .scaledToFill()
+                .frame(width: size, height: size)
+                .clipShape(Circle())
+        } else if let data = profile.avatarImageData, let uiImage = UIImage(data: data) {
             Image(uiImage: uiImage)
                 .resizable()
                 .scaledToFill()
@@ -1211,18 +1252,15 @@ private struct PersonalNoteEditor: View {
     @State private var draft: ProfileNoteCard
     @State private var hasSaved = false
     @State private var bodyHeight: CGFloat = 600
-    let allNotes: [ProfileNoteCard]
     let isNew: Bool
     let onSave: (ProfileNoteCard) -> Void
 
     init(
         note: ProfileNoteCard,
-        allNotes: [ProfileNoteCard],
         isNew: Bool = false,
         onSave: @escaping (ProfileNoteCard) -> Void
     ) {
         _draft = State(initialValue: note)
-        self.allNotes = allNotes
         self.isNew = isNew
         self.onSave = onSave
     }
@@ -1350,8 +1388,11 @@ private struct PersonalNoteEditor: View {
             draft.title = "Untitled Note"
         }
         applyAutomaticTags()
-        onSave(draft)
         dismiss()
+        let noteToSave = draft
+        DispatchQueue.main.async {
+            onSave(noteToSave)
+        }
     }
 
     private func autoSave() {
@@ -1363,7 +1404,10 @@ private struct PersonalNoteEditor: View {
             draft.title = "Untitled Note"
         }
         applyAutomaticTags()
-        onSave(draft)
+        let noteToSave = draft
+        DispatchQueue.main.async {
+            onSave(noteToSave)
+        }
     }
 
     private func toggleLink(_ id: UUID) {
@@ -1908,9 +1952,12 @@ private struct NoteSwipeRow: View {
     @State private var startOffset: CGFloat = 0
     @State private var startTranslation: CGFloat = 0
     @State private var swiping = false
+    @State private var hasLockedDirection = false
+    @State private var isHorizontalDrag = false
 
     private static let buttonSize: CGFloat = 52
     private static let revealWidth: CGFloat = 200
+    private static let directionLockThreshold: CGFloat = 14
 
     var body: some View {
         ZStack(alignment: .trailing) {
@@ -1954,20 +2001,37 @@ private struct NoteSwipeRow: View {
                 if offset != 0 { close() } else { onTap() }
             }
             .simultaneousGesture(
-                DragGesture(minimumDistance: 10)
+                DragGesture(minimumDistance: 18)
                     .onChanged { value in
                         let dx = abs(value.translation.width)
                         let dy = abs(value.translation.height)
-                        guard dx > dy else { return }
+
+                        if !hasLockedDirection {
+                            guard max(dx, dy) >= Self.directionLockThreshold else { return }
+                            hasLockedDirection = true
+                            isHorizontalDrag = dx > dy
+                            guard isHorizontalDrag else { return }
+                        }
+
+                        guard isHorizontalDrag else { return }
+
                         if !swiping {
                             swiping = true
                             startOffset = offset
                             startTranslation = value.translation.width
                         }
+
                         offset = max(min(startOffset + value.translation.width - startTranslation, 0), -Self.revealWidth)
                     }
                     .onEnded { _ in
-                        swiping = false
+                        defer {
+                            swiping = false
+                            hasLockedDirection = false
+                            isHorizontalDrag = false
+                        }
+
+                        guard isHorizontalDrag else { return }
+
                         withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
                             offset = offset < -Self.revealWidth / 2 ? -Self.revealWidth : 0
                         }

@@ -6,12 +6,12 @@ struct GroupListView: View {
     @Environment(AuthViewModel.self) private var authVM
     @Environment(GroupViewModel.self) private var groupVM
     @Binding var selectedGroup: Group?
+    @State private var directoryVM = GroupDirectoryViewModel()
     @State private var showCreate = false
     @State private var showJoin = false
     @State private var showDiscover = false
     @State private var searchText = ""
     @State private var previewGroup: Group?
-    @State private var profiles: [UUID: CommunityProfileRecord] = [:]
 
     var body: some View {
         NavigationStack {
@@ -55,8 +55,9 @@ struct GroupListView: View {
         }
         .fullScreenCover(isPresented: $showDiscover) {
             CommunityDiscoveryView(
-                groups: discoverableGroups,
-                profiles: profiles,
+                groups: directoryVM.discoverableGroups,
+                profiles: directoryVM.profiles,
+                artwork: directoryVM.artwork,
                 joinedGroupIDs: Set(groupVM.groups.map(\.id)),
                 selectedGroup: $selectedGroup,
                 currentUserID: authVM.currentUser?.id
@@ -65,18 +66,24 @@ struct GroupListView: View {
         .sheet(item: $previewGroup) { group in
             CommunityDiscoveryDetailView(
                 group: group,
-                profile: profiles[group.id] ?? CommunityProfileStore.shared.loadProfile(for: group),
-                isJoined: Set(groupVM.groups.map(\.id)).contains(group.id),
+                profile: directoryVM.profile(for: group) ?? CommunityProfileStore.shared.loadProfile(for: group),
+                isJoined: directoryVM.isJoined(group.id),
                 currentUserID: authVM.currentUser?.id
             ) { openedGroup in
                 selectedGroup = openedGroup
             }
         }
         .onAppear {
-            profiles = mergedProfiles
+            directoryVM.updateSearchText(searchText)
         }
-        .task(id: allKnownGroups.map(\.id)) {
-            profiles = mergedProfiles
+        .onChange(of: searchText) { _, newValue in
+            directoryVM.updateSearchText(newValue)
+        }
+        .task(id: groupVM.groups.map(\.id)) {
+            directoryVM.refresh(joinedGroups: groupVM.groups, discoverableGroups: groupVM.discoverableGroups)
+        }
+        .task(id: groupVM.discoverableGroups.map(\.id)) {
+            directoryVM.refresh(joinedGroups: groupVM.groups, discoverableGroups: groupVM.discoverableGroups)
         }
     }
 
@@ -211,7 +218,7 @@ struct GroupListView: View {
                         Button {
                             selectedGroup = group
                         } label: {
-                            GroupRowView(group: group, profile: profiles[group.id], isJoined: true)
+                            GroupRowView(group: group, profile: directoryVM.profile(for: group), artwork: directoryVM.artwork(for: group.id), isJoined: true)
                         }
                         .buttonStyle(.plain)
                     }
@@ -229,7 +236,7 @@ struct GroupListView: View {
                     Button {
                         previewGroup = group
                     } label: {
-                        GroupRowView(group: group, profile: profiles[group.id], isJoined: false)
+                        GroupRowView(group: group, profile: directoryVM.profile(for: group), artwork: directoryVM.artwork(for: group.id), isJoined: false)
                     }
                     .buttonStyle(.plain)
                 }
@@ -289,65 +296,27 @@ struct GroupListView: View {
     }
 
     private var filteredJoinedGroups: [Group] {
-        if trimmedSearch.isEmpty {
-            return groupVM.groups
-        }
-        return groupVM.groups.filter(matchesSearch)
+        directoryVM.filteredJoinedGroups
     }
 
     private var discoverMatches: [Group] {
-        guard !trimmedSearch.isEmpty else { return [] }
-        let joinedIDs = Set(groupVM.groups.map(\.id))
-        return discoverableGroups.filter { !joinedIDs.contains($0.id) && matchesSearch($0) }
-    }
-
-    private func matchesSearch(_ group: Group) -> Bool {
-        let profile = profiles[group.id]
-        let haystack = [
-            group.name,
-            group.description,
-            profile?.pitch ?? "",
-            profile?.territory.displayName ?? "",
-            profile?.focusTags.joined(separator: " ") ?? ""
-        ]
-        .joined(separator: " ")
-        .lowercased()
-
-        return haystack.contains(trimmedSearch)
-    }
-
-    private var trimmedSearch: String {
-        searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-    }
-
-    private var allKnownGroups: [Group] {
-        let merged = (groupVM.groups + groupVM.discoverableGroups + MockCommunityCatalog.groups).reduce(into: [UUID: Group]()) { partialResult, group in
-            partialResult[group.id] = group
-        }
-        return merged.values.sorted { $0.createdAt < $1.createdAt }
-    }
-
-    private var mergedProfiles: [UUID: CommunityProfileRecord] {
-        var loaded = CommunityProfileStore.shared.loadProfiles(for: allKnownGroups)
-        for (id, profile) in MockCommunityCatalog.profiles {
-            loaded[id] = profile
-        }
-        return loaded
+        directoryVM.discoverMatches
     }
 
     private var discoverableGroups: [Group] {
-        allKnownGroups.filter { profiles[$0.id]?.isDiscoverable ?? true }
+        directoryVM.discoverableGroups
     }
 }
 
 struct GroupRowView: View {
     let group: Group
     let profile: CommunityProfileRecord?
+    let artwork: UIImage?
     let isJoined: Bool
 
     var body: some View {
         HStack(spacing: 16) {
-            CommunityArtworkView(group: group, profile: profile, size: 72, cornerRadius: 22)
+            CommunityArtworkView(group: group, profile: profile, image: artwork, size: 72, cornerRadius: 22)
 
             VStack(alignment: .leading, spacing: 7) {
                 HStack(spacing: 8) {
@@ -414,6 +383,7 @@ struct GroupRowView: View {
 private struct CommunityArtworkView: View {
     let group: Group
     let profile: CommunityProfileRecord?
+    let image: UIImage?
     let size: CGFloat
     let cornerRadius: CGFloat
 
@@ -428,7 +398,7 @@ private struct CommunityArtworkView: View {
             )
             .frame(width: size, height: size)
             .overlay {
-                if let data = profile?.logoImageData, let image = UIImage(data: data) {
+                if let image {
                     Image(uiImage: image)
                         .resizable()
                         .scaledToFill()
@@ -446,6 +416,7 @@ private struct CommunityArtworkView: View {
 private struct CommunityDiscoveryView: View {
     let groups: [Group]
     let profiles: [UUID: CommunityProfileRecord]
+    let artwork: [UUID: UIImage]
     let joinedGroupIDs: Set<UUID>
     @Binding var selectedGroup: Group?
     let currentUserID: UUID?
@@ -530,7 +501,7 @@ private struct CommunityDiscoveryView: View {
                 if let spotGroup = filteredGroups.first(where: { $0.id == selectedMapGroupID }) ?? filteredGroups.first {
                     Button { previewGroup = spotGroup } label: {
                         HStack(spacing: 14) {
-                            CommunityArtworkView(group: spotGroup, profile: profiles[spotGroup.id], size: 54, cornerRadius: 16)
+                            CommunityArtworkView(group: spotGroup, profile: profiles[spotGroup.id], image: artwork[spotGroup.id], size: 54, cornerRadius: 16)
 
                             VStack(alignment: .leading, spacing: 4) {
                                 Text(spotGroup.name)
@@ -639,7 +610,7 @@ private struct CommunityDiscoveryDetailView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
                     HStack(spacing: 16) {
-                        CommunityArtworkView(group: group, profile: profile, size: 86, cornerRadius: 24)
+                        CommunityArtworkView(group: group, profile: profile, image: nil, size: 86, cornerRadius: 24)
 
                         VStack(alignment: .leading, spacing: 6) {
                             Text(group.name)
@@ -952,7 +923,7 @@ private enum AtlasHaptics {
     }
 }
 
-private enum MockCommunityCatalog {
+enum MockCommunityCatalog {
     static let groups: [Group] = [
         group("7D13E4D9-6D85-4D8C-9434-4D0D7E4AE001", "Founders Row", "A dense builder community for startup operators, product people, and engineers.", 12),
         group("7D13E4D9-6D85-4D8C-9434-4D0D7E4AE002", "Wasatch Builders", "A local Utah cluster for people shipping software and ambitious projects.", 14),

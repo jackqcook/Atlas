@@ -7,6 +7,8 @@ final class GroupViewModel {
     var discoverableGroups: [Group] = []
     var isLoading = false
     var error: String?
+    var hasLoadedGroups = false
+    var hasLoadedDiscoverableGroups = false
 
     private let groupService = GroupService.shared
 
@@ -14,6 +16,7 @@ final class GroupViewModel {
         isLoading = true
         do {
             groups = try await groupService.fetchMyGroups(userID: userID)
+            hasLoadedGroups = true
         } catch {
             self.error = error.localizedDescription
         }
@@ -54,8 +57,19 @@ final class GroupViewModel {
     func loadDiscoverableGroups() async {
         do {
             discoverableGroups = try await groupService.fetchAllGroups()
+            hasLoadedDiscoverableGroups = true
         } catch {
             self.error = error.localizedDescription
         }
+    }
+
+    func ensureGroupsLoaded(for userID: UUID) async {
+        guard !hasLoadedGroups else { return }
+        await loadGroups(for: userID)
+    }
+
+    func ensureDiscoverableGroupsLoaded() async {
+        guard !hasLoadedDiscoverableGroups else { return }
+        await loadDiscoverableGroups()
     }
 }
